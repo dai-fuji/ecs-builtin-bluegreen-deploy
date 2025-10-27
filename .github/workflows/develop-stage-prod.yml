@@ -1,0 +1,241 @@
+name: Deploy stage and prod
+
+# ----------------------------------------------------------------------
+# ワークフローのトリガー
+# ----------------------------------------------------------------------
+on:
+  push:
+    branches:
+      - release # 'release' ブランチにプッシュされた時に実行
+  workflow_dispatch: {} # 手動実行 (Actionsタブの "Run workflow") を許可
+
+# ----------------------------------------------------------------------
+# ワークフロー全体の環境変数
+# ----------------------------------------------------------------------
+env:
+  IMAGE_TAG: v1.0 
+  ECR_REPOSITORY_URI: 832194395201.dkr.ecr.ap-northeast-1.amazonaws.com/sakurai-test-app-ecr01
+  ECS_CLUSTER_NAME: sakurai-test-sv-mylxs-app-ecsservice01
+  ECS_SERVICE_NAME: sakurai-test-sv-mylxs-app-ecscluster01
+
+# ----------------------------------------------------------------------
+# 権限の設定
+# ----------------------------------------------------------------------
+permissions:
+  id-token: write # AWSへのOIDC認証トークン発行に必要
+  contents: read  # リポジトリのコードをチェックアウトするために必要
+
+# ----------------------------------------------------------------------
+# ジョブの定義
+# ----------------------------------------------------------------------
+jobs:
+  # --------------------------------------------------
+  # 検証環境
+  # --------------------------------------------------
+  deploy-stage:
+    name: Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      # --------------------------------------------------
+      # ステップ1: デプロイ用 AWS認証の設定
+      # --------------------------------------------------
+      # OIDCを使用してAWSのIAMロールを引き受けます。事前にAWS側でOIDCプロバイダーとIAMロールの設定が必要です。
+      # デプロイは各環境にAssumeロールするロールが個別に存在していますので、環境ごとにプレフィックスが異なります。
+      #
+      # 以下のシークレットを GitHub リポジトリの
+      # [Settings] > [Secrets and variables] > [Actions] に設定してください。
+      # - AWS_IAM_ROLE_NAME_DEPLOY:  GitHub Actionsが引き受けるIAMロール名
+      - name: Configure AWS credentials Deploy
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::832194395201:role/fujimoto-deploy
+          aws-region: ap-northeast-1
+
+      # --------------------------------------------------
+      # ステップ2: タスク定義の更新
+      # --------------------------------------------------
+      # amazon-ecs-render-task-definition` アクションを使い、新しいイメージタグをタスク定義ファイルに反映させます。
+      # イメージタグはビルドジョブで固定化されています。
+      - name: Render Amazon ECS task definition
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: taskdef/task-definition.json
+          container-name: sakurai-test-sv-mylxs-app-ecsco01
+          image: ${{ env.ECR_REPOSITORY_URI }}:${{ env.IMAGE_TAG }}
+          # image: ${{ steps.build-image.outputs.image }} #TWS CircleCIはconfig.ymlで設定
+      
+      # --------------------------------------------------
+      # ステップ3: ECSタスクのデプロイ
+      # --------------------------------------------------
+      # `amazon-ecs-deploy-task-definition` を使用して、
+      # 新しいタスク定義を登録し、サービスを更新します。
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE_NAME }}
+          cluster: ${{ env.ECS_CLUSTER_NAME }}
+          # (オプション) trueに設定すると、デプロイが完了し、
+          # サービスが安定状態 (STABLE) になるまでワークフローが待機します。
+          # デプロイ失敗時にワークフローを失敗させるために推奨されます。
+          wait-for-service-stability: true
+
+  # --------------------------------------------------
+  # 号口配信前承認 approvalGL通知 → approvalGL承認 → approval通知 → approval承認
+  # --------------------------------------------------  
+  notify-approvalGL:
+    name: Notify approvalGL
+    runs-on: ubuntu-latest
+    needs: deploy-stage
+    steps:
+      # --------------------------------------------------
+      # ステップ1: ビルド・SNS通知用 AWS認証の設定
+      # --------------------------------------------------
+      # OIDCを使用してAWSのIAMロールを引き受けます。
+      # 事前にAWS側でOIDCプロバイダーとIAMロールの設定が必要です。
+      # ECRは検証環境を共有するため、Assumeロールするロール名は固定です。
+      #
+      # 以下のシークレットを GitHub リポジトリの
+      # [Settings] > [Secrets and variables] > [Actions] に設定してください。
+      #
+      # - AWS_IAM_ROLE_NAME:  GitHub Actionsが引き受けるIAMロール名
+      - name: Configure AWS credentials Build
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::832194395201:role/fujimoto-ecs-cicd-buildandpush
+          aws-region: ap-northeast-1
+
+      # --------------------------------------------------
+      # ステップ2: 承認依頼を送信
+      # --------------------------------------------------
+      # 事前にメール通知先をサブスクリプションしておく必要があります。
+      - name: Send email to GL approver
+        run: |
+          # メッセージ本文を作成
+          MESSAGE_BODY="申請ユーザー:${{ github.actor }}
+          号口環境へ配信の承認をお願いします。
+          【承認URL】 https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          配信内容の詳細は、申請ユーザーより別途ご説明させていただきます。
+          Github organization:${{ github.repository_owner }}"
+
+          # トピックARNを構築
+          TOPIC_ARN="arn:aws:sns:ap-northeast-1:832194395201:fujimoto"
+
+          # AWS CLIでSNSトピックに発行
+          aws sns publish --topic-arn "$TOPIC_ARN" --message "$MESSAGE_BODY"
+
+  approvalGL:
+      name: approvalGL
+      runs-on: ubuntu-latest
+      environment:
+        name: approvalGL
+      needs: notify-approvalGL
+      steps:
+        - name: Configure AWS credentials Build
+          run: echo "承認されました。"
+
+  notify-approval:
+    name: Notify approval
+    runs-on: ubuntu-latest
+    needs: approvalGL
+    steps:
+      # --------------------------------------------------
+      # ステップ1: ビルド・SNS通知用 AWS認証の設定
+      # --------------------------------------------------
+      # OIDCを使用してAWSのIAMロールを引き受けます。
+      # 事前にAWS側でOIDCプロバイダーとIAMロールの設定が必要です。
+      # ECRは検証環境を共有するため、Assumeロールするロール名は固定です。
+      #
+      # 以下のシークレットを GitHub リポジトリの
+      # [Settings] > [Secrets and variables] > [Actions] に設定してください。
+      #
+      # - AWS_IAM_ROLE_NAME:  GitHub Actionsが引き受けるIAMロール名
+      - name: Configure AWS credentials Build
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::832194395201:role/fujimoto-ecs-cicd-buildandpush
+          aws-region: ap-northeast-1
+
+      # --------------------------------------------------
+      # ステップ2: 承認依頼を送信
+      # --------------------------------------------------
+      # 事前にメール通知先をサブスクリプションしておく必要があります。
+      - name: Send email to approver
+        run: |
+          # メッセージ本文を作成
+          MESSAGE_BODY="申請ユーザー:${{ github.actor }}
+          本メールはアプリ責任者の承認後、号口作業者に送信されます。
+          問題なければ、下記承認URLから承認し、号口作業環境へデプロイをお願いします。
+          【承認URL】 https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          Github organization:${{ github.repository_owner }}"
+
+          # トピックARNを構築
+          TOPIC_ARN="arn:aws:sns:ap-northeast-1:832194395201:fujimoto"
+
+          # AWS CLIでSNSトピックに発行
+          aws sns publish --topic-arn "$TOPIC_ARN" --message "$MESSAGE_BODY"
+
+  approval:
+      name: approval
+      runs-on: ubuntu-latest
+      environment:
+        name: approval
+      needs: notify-approval
+      steps:
+        - name: Configure AWS credentials Build
+          run: echo "承認されました。"
+
+  # --------------------------------------------------
+  # 号口環境
+  # --------------------------------------------------
+  deploy-prod:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: approval
+    timeout-minutes: 60
+    steps:
+      # --------------------------------------------------
+      # ステップ1: デプロイ用 AWS認証の設定
+      # --------------------------------------------------
+      # OIDCを使用してAWSのIAMロールを引き受けます。事前にAWS側でOIDCプロバイダーとIAMロールの設定が必要です。
+      # デプロイは各環境にAssumeロールするロールが個別に存在していますので、環境ごとにプレフィックスが異なります。
+      #
+      # 以下のシークレットを GitHub リポジトリの
+      # [Settings] > [Secrets and variables] > [Actions] に設定してください。
+      # - AWS_IAM_ROLE_NAME_DEPLOY:  GitHub Actionsが引き受けるIAMロール名
+      - name: Configure AWS credentials Deploy
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::832194395201:role/fujimoto-deploy
+          aws-region: ap-northeast-1
+
+      # --------------------------------------------------
+      # ステップ2: タスク定義の更新
+      # --------------------------------------------------
+      # amazon-ecs-render-task-definition` アクションを使い、新しいイメージタグをタスク定義ファイルに反映させます。
+      # イメージタグはビルドジョブで固定化されています。
+      - name: Render Amazon ECS task definition
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: taskdef/task-definition.json
+          container-name: sakurai-test-sv-mylxs-app-ecsco01
+          image: ${{ steps.build-image.outputs.image }} 
+      
+      # --------------------------------------------------
+      # ステップ3: ECSタスクのデプロイ
+      # --------------------------------------------------
+      # `amazon-ecs-deploy-task-definition` を使用して、
+      # 新しいタスク定義を登録し、サービスを更新します。
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+          service: ${{ env.ECS_SERVICE_NAME }}
+          cluster: ${{ env.ECS_CLUSTER_NAME }}
+          # (オプション) trueに設定すると、デプロイが完了し、
+          # サービスが安定状態 (STABLE) になるまでワークフローが待機します。
+          # デプロイ失敗時にワークフローを失敗させるために推奨されます。
+          wait-for-service-stability: true
