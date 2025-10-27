@@ -99,7 +99,7 @@ jobs:
           # イメージを更新するコンテナ名 (タスク定義内で定義したもの)
           container-name: sakurai-test-sv-mylxs-app-ecsco01
           # ECRにプッシュした新しいイメージURI (例: 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/my-app:latest)
-          image: ${{ steps.build-and-push-image.outputs.image }} # (前のステップでイメージURIを出力した場合)
+          image: ${{ steps.build-image.outputs.image }} # (前のステップでイメージURIを出力した場合)
       
       # --------------------------------------------------
       # ステップ3: ECSタスク定義のデプロイ
