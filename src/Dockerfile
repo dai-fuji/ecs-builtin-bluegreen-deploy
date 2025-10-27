@@ -1,20 +1,11 @@
-# ベースイメージ
-FROM public.ecr.aws/docker/library/nginx:latest
+FROM public.ecr.aws/nginx/nginx:latest
 
-# curlをインストール (ヘルスチェック用)
-USER root
-RUN apt-get update && apt-get install -y curl && \
-    # クリーンアップ
-    apt-get clean && rm -rf /var/lib/apt/lists/*
+# ★★★ コピー先を nginx.conf 本体に変更 ★★★
+COPY src/nginx.conf /etc/nginx/nginx.conf
 
-# カスタムNginx設定ファイル (8080ポート用) をコピー
-COPY default.conf /etc/nginx/conf.d/default.conf
+COPY src/ /usr/share/nginx/html/
 
-# サンプルページの追加
-COPY index.html /usr/share/nginx/html/index.html
-
-# 8080ポートを公開
+# ★★★ Nginxのlistenポートと合わせる ★★★
 EXPOSE 8080
 
-# Nginxユーザーに戻す
-USER nginx
+CMD ["nginx", "-g", "daemon off;"]
