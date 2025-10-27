@@ -107,7 +107,7 @@ jobs:
       # `amazon-ecs-deploy-task-definition` を使用して、
       # 新しいタスク定義を登録し、サービスを更新します。
       - name: Deploy Amazon ECS task definition
-        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           # タスク定義ファイルへのパス。
           # ※リポジトリに `task-definition.json` が存在すると仮定しています。
