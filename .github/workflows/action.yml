@@ -74,13 +74,13 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-      # - name: Configure AWS credentials Deploy
-      #   uses: aws-actions/configure-aws-credentials@v4
-      #   with:
-      #     # 引き受けるIAMロールのARN (Amazon Resource Name)
-      #     role-to-assume: arn:aws:iam::832194395201:role/sakurai-test-sv-mylxs-ecsdeploy-role01
-      #     # AWSリージョン
-      #     aws-region: ap-northeast-1
+      - name: Configure AWS credentials Deploy
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # 引き受けるIAMロールのARN (Amazon Resource Name)
+          role-to-assume: arn:aws:iam::832194395201:role/fujimoto-deploy
+          # AWSリージョン
+          aws-region: ap-northeast-1
 
       # --------------------------------------------------
       # (オプション) ステップ: タスク定義のレンダリング
@@ -90,38 +90,38 @@ jobs:
       # その場合、`amazon-ecs-render-task-definition` アクションを使い、
       # 新しいイメージタグをタスク定義ファイルに反映させます。
       #
-      # - name: Render Amazon ECS task definition ## 一旦ここまで
-      #   id: render-task-def
-      #   uses: aws-actions/amazon-ecs-render-task-definition@v1
-      #   with:
-      #     # ベースとなるタスク定義ファイル (リポジトリ内のパス)
-      #     task-definition: taskdef/task-definition.json
-      #     # イメージを更新するコンテナ名 (タスク定義内で定義したもの)
-      #     container-name: sakurai-test-sv-mylxs-app-ecsco01
-      #     # ECRにプッシュした新しいイメージURI (例: 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/my-app:latest)
-      #     image: ${{ steps.build-and-push-image.outputs.image }} # (前のステップでイメージURIを出力した場合)
+      - name: Render Amazon ECS task definition ## 一旦ここまで
+        id: render-task-def
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          # ベースとなるタスク定義ファイル (リポジトリ内のパス)
+          task-definition: taskdef/task-definition.json
+          # イメージを更新するコンテナ名 (タスク定義内で定義したもの)
+          container-name: sakurai-test-sv-mylxs-app-ecsco01
+          # ECRにプッシュした新しいイメージURI (例: 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/my-app:latest)
+          image: ${{ steps.build-and-push-image.outputs.image }} # (前のステップでイメージURIを出力した場合)
       
-      # # --------------------------------------------------
-      # # ステップ3: ECSタスク定義のデプロイ
-      # # --------------------------------------------------
-      # # `amazon-ecs-deploy-task-definition` を使用して、
-      # # 新しいタスク定義を登録し、サービスを更新します。
-      # - name: Deploy Amazon ECS task definition
-      #   uses: aws-actions/amazon-ecs-deploy-task-definition@v1
-      #   with:
-      #     # タスク定義ファイルへのパス。
-      #     # ※リポジトリに `task-definition.json` が存在すると仮定しています。
-      #     task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+      # --------------------------------------------------
+      # ステップ3: ECSタスク定義のデプロイ
+      # --------------------------------------------------
+      # `amazon-ecs-deploy-task-definition` を使用して、
+      # 新しいタスク定義を登録し、サービスを更新します。
+      - name: Deploy Amazon ECS task definition
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+        with:
+          # タスク定義ファイルへのパス。
+          # ※リポジトリに `task-definition.json` が存在すると仮定しています。
+          task-definition: ${{ steps.render-task-def.outputs.task-definition }}
 
-      #     # 更新するECSサービス名。
-      #     # (GitHub Secretsでの管理を推奨: ${{ secrets.ECS_SERVICE_NAME }})
-      #     service: sakurai-test-sv-mylxs-app-ecsservice01
+          # 更新するECSサービス名。
+          # (GitHub Secretsでの管理を推奨: ${{ secrets.ECS_SERVICE_NAME }})
+          service: sakurai-test-sv-mylxs-app-ecsservice01
 
-      #     # ECSクラスター名。
-      #     # (GitHub Secretsでの管理を推奨: ${{ secrets.ECS_CLUSTER_NAME }})
-      #     cluster: sakurai-test-sv-mylxs-app-ecscluster01
+          # ECSクラスター名。
+          # (GitHub Secretsでの管理を推奨: ${{ secrets.ECS_CLUSTER_NAME }})
+          cluster: sakurai-test-sv-mylxs-app-ecscluster01
 
-      #     # (オプション) trueに設定すると、デプロイが完了し、
-      #     # サービスが安定状態 (STABLE) になるまでワークフローが待機します。
-      #     # デプロイ失敗時にワークフローを失敗させるために推奨されます。
-      #     wait-for-service-stability: false
+          # (オプション) trueに設定すると、デプロイが完了し、
+          # サービスが安定状態 (STABLE) になるまでワークフローが待機します。
+          # デプロイ失敗時にワークフローを失敗させるために推奨されます。
+          wait-for-service-stability: false
