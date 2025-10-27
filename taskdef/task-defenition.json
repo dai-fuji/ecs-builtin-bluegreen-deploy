@@ -1,0 +1,90 @@
+{
+    "containerDefinitions": [
+        {
+            "name": "sakurai-test-sv-mylxs-app-ecsco01",
+            "image": "832194395201.dkr.ecr.ap-northeast-1.amazonaws.com/sakurai-test-app-ecr01:latest2",
+            "cpu": 0,
+            "portMappings": [
+                {
+                    "containerPort": 8080,
+                    "hostPort": 8080,
+                    "protocol": "tcp"
+                }
+            ],
+            "essential": true,
+            "environment": [],
+            "mountPoints": [
+                {
+                    "sourceVolume": "tmp",
+                    "containerPath": "/tmp",
+                    "readOnly": false
+                }
+            ],
+            "volumesFrom": [],
+            "readonlyRootFilesystem": false,
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/sakurai-test-mylxs-app-ecstask01",
+                    "mode": "non-blocking",
+                    "max-buffer-size": "25m",
+                    "awslogs-region": "ap-northeast-1",
+                    "awslogs-stream-prefix": "ecs"
+                }
+            },
+            "systemControls": []
+        }
+    ],
+    "family": "sakurai-test-sv-mylxs-app-ecstask01",
+    "taskRoleArn": "sakurai-test-sv-mylxs-ecstask-role01",
+    "executionRoleArn": "akurai-test-sv-mylxs-ecstaskexec-role01",
+    "networkMode": "awsvpc",
+    "revision": 7,
+    "volumes": [
+        {
+            "name": "tmp",
+            "host": {}
+        }
+    ],
+    "status": "ACTIVE",
+    "requiresAttributes": [
+        {
+            "name": "com.amazonaws.ecs.capability.logging-driver.awslogs"
+        },
+        {
+            "name": "ecs.capability.execution-role-awslogs"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.ecr-auth"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.19"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.28"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.task-iam-role"
+        },
+        {
+            "name": "ecs.capability.execution-role-ecr-pull"
+        },
+        {
+            "name": "com.amazonaws.ecs.capability.docker-remote-api.1.18"
+        },
+        {
+            "name": "ecs.capability.task-eni"
+        }
+    ],
+    "placementConstraints": [],
+    "compatibilities": [
+        "EC2",
+        "FARGATE",
+        "MANAGED_INSTANCES"
+    ],
+    "requiresCompatibilities": [
+        "FARGATE"
+    ],
+    "cpu": "1024",
+    "memory": "2048"
+}

@@ -1,0 +1,127 @@
+# ワークフロー名
+name: Deploy to Amazon ECS
+
+# ----------------------------------------------------------------------
+# ワークフローのトリガー
+# ----------------------------------------------------------------------
+on:
+  push:
+    branches:
+      - main # 'main' ブランチにプッシュされた時に実行
+  workflow_dispatch: {} # 手動実行 (Actionsタブの "Run workflow") を許可
+
+# ----------------------------------------------------------------------
+# 権限の設定
+# ----------------------------------------------------------------------
+# AWS OIDC (OpenID Connect) 認証を使用して、
+# GitHub ActionsがAWSリソースにアクセスするために必要な一時的な認証情報を取得します。
+permissions:
+  id-token: write # AWSへのOIDC認証トークン発行に必要
+  contents: read  # リポジトリのコードをチェックアウトするために必要
+
+# ----------------------------------------------------------------------
+# ジョブの定義
+# ----------------------------------------------------------------------
+jobs:
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    
+    # (オプション) GitHub Environments を使用してシークレットを管理する場合
+    # environment: production 
+
+    steps:
+      # --------------------------------------------------
+      # ステップ1: コードのチェックアウト
+      # --------------------------------------------------
+      # リポジトリのコードを実行環境にダウンロードします。
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # --------------------------------------------------
+      # ステップ2: AWS認証の設定
+      # --------------------------------------------------
+      # OIDCを使用してAWSのIAMロールを引き受けます。
+      # 事前にAWS側でOIDCプロバイダーとIAMロールの設定が必要です。
+      #
+      # 以下のシークレットを GitHub リポジトリの
+      # [Settings] > [Secrets and variables] > [Actions] に設定してください。
+      #
+      # - AWS_ACCOUNT_ID:     AWSアカウントID
+      # - AWS_IAM_ROLE_NAME:  GitHub Actionsが引き受けるIAMロール名
+      # - AWS_REGION:         対象のAWSリージョン (例: ap-northeast-1)
+      #
+      - name: Configure AWS credentials Build
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # 引き受けるIAMロールのARN (Amazon Resource Name)
+          role-to-assume: arn:aws:iam::832194395201:role/fujimoto-ecs-cicd-buildandpush
+          # AWSリージョン
+          aws-region: ap-northeast-1
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: sakurai-test-app-ecr01
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG src/
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      # - name: Configure AWS credentials Deploy
+      #   uses: aws-actions/configure-aws-credentials@v4
+      #   with:
+      #     # 引き受けるIAMロールのARN (Amazon Resource Name)
+      #     role-to-assume: arn:aws:iam::832194395201:role/sakurai-test-sv-mylxs-ecsdeploy-role01
+      #     # AWSリージョン
+      #     aws-region: ap-northeast-1
+
+      # --------------------------------------------------
+      # (オプション) ステップ: タスク定義のレンダリング
+      # --------------------------------------------------
+      # 実際のCI/CDパイプラインでは、この直前にDockerイメージをビルドし、
+      # ECR (Elastic Container Registry) にプッシュするステップが入ることが多いです。
+      # その場合、`amazon-ecs-render-task-definition` アクションを使い、
+      # 新しいイメージタグをタスク定義ファイルに反映させます。
+      #
+      # - name: Render Amazon ECS task definition ## 一旦ここまで
+      #   id: render-task-def
+      #   uses: aws-actions/amazon-ecs-render-task-definition@v1
+      #   with:
+      #     # ベースとなるタスク定義ファイル (リポジトリ内のパス)
+      #     task-definition: taskdef/task-definition.json
+      #     # イメージを更新するコンテナ名 (タスク定義内で定義したもの)
+      #     container-name: sakurai-test-sv-mylxs-app-ecsco01
+      #     # ECRにプッシュした新しいイメージURI (例: 123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/my-app:latest)
+      #     image: ${{ steps.build-and-push-image.outputs.image }} # (前のステップでイメージURIを出力した場合)
+      
+      # # --------------------------------------------------
+      # # ステップ3: ECSタスク定義のデプロイ
+      # # --------------------------------------------------
+      # # `amazon-ecs-deploy-task-definition` を使用して、
+      # # 新しいタスク定義を登録し、サービスを更新します。
+      # - name: Deploy Amazon ECS task definition
+      #   uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      #   with:
+      #     # タスク定義ファイルへのパス。
+      #     # ※リポジトリに `task-definition.json` が存在すると仮定しています。
+      #     task-definition: ${{ steps.render-task-def.outputs.task-definition }}
+
+      #     # 更新するECSサービス名。
+      #     # (GitHub Secretsでの管理を推奨: ${{ secrets.ECS_SERVICE_NAME }})
+      #     service: sakurai-test-sv-mylxs-app-ecsservice01
+
+      #     # ECSクラスター名。
+      #     # (GitHub Secretsでの管理を推奨: ${{ secrets.ECS_CLUSTER_NAME }})
+      #     cluster: sakurai-test-sv-mylxs-app-ecscluster01
+
+      #     # (オプション) trueに設定すると、デプロイが完了し、
+      #     # サービスが安定状態 (STABLE) になるまでワークフローが待機します。
+      #     # デプロイ失敗時にワークフローを失敗させるために推奨されます。
+      #     wait-for-service-stability: false
