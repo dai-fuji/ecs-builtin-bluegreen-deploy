@@ -37,7 +37,7 @@
     ],
     "family": "sakurai-test-sv-mylxs-app-ecstask01",
     "taskRoleArn": "sakurai-test-sv-mylxs-ecstask-role01",
-    "executionRoleArn": "akurai-test-sv-mylxs-ecstaskexec-role01",
+    "executionRoleArn": "sakurai-test-sv-mylxs-ecstaskexec-role01",
     "networkMode": "awsvpc",
     "revision": 7,
     "volumes": [
