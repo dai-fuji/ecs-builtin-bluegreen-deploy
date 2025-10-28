@@ -82,6 +82,8 @@ jobs:
     needs: image-build
     timeout-minutes: 60
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
       # --------------------------------------------------
       # ステップ1: デプロイ用 AWS認証の設定
       # --------------------------------------------------
