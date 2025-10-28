@@ -14,7 +14,8 @@ on:
 # ----------------------------------------------------------------------
 env:
   IMAGE_TAG: v1.0 
-  ECR_REPOSITORY_URI: 832194395201.dkr.ecr.ap-northeast-1.amazonaws.com/sakurai-test-app-ecr01
+  ECR_REGISTRY: 832194395201.dkr.ecr.ap-northeast-1.amazonaws.com
+  ECR_REPOSITORY: sakurai-test-app-ecr01
   ECS_CLUSTER_NAME: sakurai-test-sv-mylxs-app-ecsservice01
   ECS_SERVICE_NAME: sakurai-test-sv-mylxs-app-ecscluster01
 
