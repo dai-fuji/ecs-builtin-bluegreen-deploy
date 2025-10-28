@@ -68,7 +68,8 @@ jobs:
         env:
           ECR_REGISTRY: ${{ env.ECR_REGISTRY }}
           ECR_REPOSITORY: ${{ env.ECR_REPOSITORY }}
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          # IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          IMAGE_TAG: test     
           # IMAGE_TAG: ${{ github.sha }} #TWS CircleCIはconfig.ymlで設定
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG src/
