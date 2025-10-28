@@ -1,20 +1,26 @@
-# ワークフロー名
-name: Deploy to Amazon ECS
+name: Deploy develop
 
 # ----------------------------------------------------------------------
 # ワークフローのトリガー
 # ----------------------------------------------------------------------
 on:
-  # push:
-  #   branches:
-  #     - main # 'main' ブランチにプッシュされた時に実行
+  push:
+    branches:
+      - develop # 'develop' ブランチにプッシュされた時に実行
   workflow_dispatch: {} # 手動実行 (Actionsタブの "Run workflow") を許可
+
+# ----------------------------------------------------------------------
+# ワークフロー全体の環境変数
+# ----------------------------------------------------------------------
+env:
+  IMAGE_TAG: v1.0 
+  ECR_REPOSITORY_URI: 832194395201.dkr.ecr.ap-northeast-1.amazonaws.com/sakurai-test-app-ecr01
+  ECS_CLUSTER_NAME: sakurai-test-sv-mylxs-app-ecsservice01
+  ECS_SERVICE_NAME: sakurai-test-sv-mylxs-app-ecscluster01
 
 # ----------------------------------------------------------------------
 # 権限の設定
 # ----------------------------------------------------------------------
-# AWS OIDC (OpenID Connect) 認証を使用して、
-# GitHub ActionsがAWSリソースにアクセスするために必要な一時的な認証情報を取得します。
 permissions:
   id-token: write # AWSへのOIDC認証トークン発行に必要
   contents: read  # リポジトリのコードをチェックアウトするために必要
@@ -23,49 +29,46 @@ permissions:
 # ジョブの定義
 # ----------------------------------------------------------------------
 jobs:
-  deploy:
-    name: Deploy to ECS
+  image-build:
+    name: Image Build and Push
     runs-on: ubuntu-latest
+    outputs:
+      image-uri: ${{ steps.build-image.outputs.image }}
     steps:
-      # --------------------------------------------------
-      # ステップ1: コードのチェックアウト
-      # --------------------------------------------------
       - name: Checkout code
         uses: actions/checkout@v4
 
       # --------------------------------------------------
-      # ステップ2: ビルド・SNS通知用 AWS認証の設定
+      # ステップ1: ビルド・SNS通知用 AWS認証の設定
       # --------------------------------------------------
-      # OIDCを使用してAWSのIAMロールを引き受けます。
-      # 事前にAWS側でOIDCプロバイダーとIAMロールの設定が必要です。
+      # OIDCを使用してAWSのIAMロールを引き受けます。事前にAWS側でOIDCプロバイダーとIAMロールの設定が必要です。
       # ECRは検証環境を共有するため、Assumeロールするロール名は固定です。
       #
       # 以下のシークレットを GitHub リポジトリの
       # [Settings] > [Secrets and variables] > [Actions] に設定してください。
-      #
-      # - AWS_IAM_ROLE_NAME:  GitHub Actionsが引き受けるIAMロール名
+      # - AWS_IAM_ROLE_NAME_BUILD:  GitHub Actionsが引き受けるIAMロール名
       - name: Configure AWS credentials Build
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::832194395201:role/fujimoto-ecs-cicd-buildandpush
           aws-region: ap-northeast-1
 
+      # --------------------------------------------------
+      # ステップ2: コンテナイメージのビルドとイメージのプッシュ
+      # --------------------------------------------------
+      # コンテナイメージのビルドとプッシュを行います。
+      # イメージタグはlatestと変数の2つを付与します。TWS CI/CD（CircleCI版同様）
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # --------------------------------------------------
-      # ステップ3: コンテナイメージのビルドとイメージのプッシュ
-      # --------------------------------------------------
-      # コンテナイメージのビルドとプッシュを行います。
-      # イメージタグはlatestとコミットハッシュの2つを付与します。
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           ECR_REPOSITORY: sakurai-test-app-ecr01
-          IMAGE_TAG: v1.0
-          # IMAGE_TAG: ${{ github.sha }} #TWS CircleCIはパラメータで設定
+          IMAGE_TAG: ${{ env.IMAGE_TAG }}
+          # IMAGE_TAG: ${{ github.sha }} #TWS CircleCIはconfig.ymlで設定
         run: |
           docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG src/
           docker tag $REPOSITORY_URI:$IMAGE_TAG $REPOSITORY_URI:latest 
@@ -73,17 +76,21 @@ jobs:
           docker push $ECR_REGISTRY/$ECR_REPOSITORY::latest
           echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: image-build
+    timeout-minutes: 60
+    steps:
       # --------------------------------------------------
-      # ステップ4: デプロイ用 AWS認証の設定
+      # ステップ1: デプロイ用 AWS認証の設定
       # --------------------------------------------------
-      # OIDCを使用してAWSのIAMロールを引き受けます。
-      # 事前にAWS側でOIDCプロバイダーとIAMロールの設定が必要です。
+      # OIDCを使用してAWSのIAMロールを引き受けます。事前にAWS側でOIDCプロバイダーとIAMロールの設定が必要です。
       # デプロイは各環境にAssumeロールするロールが個別に存在していますので、環境ごとにプレフィックスが異なります。
       #
       # 以下のシークレットを GitHub リポジトリの
       # [Settings] > [Secrets and variables] > [Actions] に設定してください。
-      #
-      # - AWS_IAM_ROLE_NAME:  GitHub Actionsが引き受けるIAMロール名
+      # - AWS_IAM_ROLE_NAME_DEPLOY:  GitHub Actionsが引き受けるIAMロール名
       - name: Configure AWS credentials Deploy
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -91,21 +98,21 @@ jobs:
           aws-region: ap-northeast-1
 
       # --------------------------------------------------
-      # ステップ5: タスク定義の更新
+      # ステップ2: タスク定義の更新
       # --------------------------------------------------
-      # amazon-ecs-render-task-definition` アクションを使い、
-      # 新しいイメージタグをタスク定義ファイルに反映させます。
-      # イメージタグはコミットハッシュのものを利用しています。
+      # amazon-ecs-render-task-definition` アクションを使い、新しいイメージタグをタスク定義ファイルに反映させます。
+      # イメージタグはビルドジョブで固定化されています。
       - name: Render Amazon ECS task definition
         id: render-task-def
         uses: aws-actions/amazon-ecs-render-task-definition@v1
         with:
           task-definition: taskdef/task-definition.json
           container-name: sakurai-test-sv-mylxs-app-ecsco01
-          image: ${{ steps.build-image.outputs.image }} 
+          image: ${{ env.ECR_REPOSITORY_URI }}:${{ env.IMAGE_TAG }}
+          # image: ${{ steps.build-image.outputs.image }} 
       
       # --------------------------------------------------
-      # ステップ6: ECSタスク定義のデプロイ
+      # ステップ3: ECSタスクのデプロイ
       # --------------------------------------------------
       # `amazon-ecs-deploy-task-definition` を使用して、
       # 新しいタスク定義を登録し、サービスを更新します。
@@ -113,19 +120,25 @@ jobs:
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
           task-definition: ${{ steps.render-task-def.outputs.task-definition }}
-          service: sakurai-test-sv-mylxs-app-ecsservice01
-          cluster: sakurai-test-sv-mylxs-app-ecscluster01
+          service: ${{ env.ECS_SERVICE_NAME }}
+          cluster: ${{ env.ECS_CLUSTER_NAME }}
           # (オプション) trueに設定すると、デプロイが完了し、
           # サービスが安定状態 (STABLE) になるまでワークフローが待機します。
           # デプロイ失敗時にワークフローを失敗させるために推奨されます。
-          wait-for-service-stability: false
-
-      # --------------------------------------------------
-      # ステップ?: notify_approvalGL 検証・号口のみ 号口のタスク定義更新前に実施
-      # --------------------------------------------------  
-  nortify:
-    name: SNS Nortify
+          wait-for-service-stability: true
+  # --------------------------------------------------         
+  # --------------------------------------------------  
+  # --------------------------------------------------  
+  # --------------------------------------------------
+  # 号口配信前承認 approvalGL通知 → approvalGL承認 → approval通知 → approval承認
+  # --------------------------------------------------         
+  # --------------------------------------------------  
+  # --------------------------------------------------  
+  # --------------------------------------------------
+  notify-approvalGL:
+    name: Notify approvalGL
     runs-on: ubuntu-latest
+    needs: deploy
     steps:
       # --------------------------------------------------
       # ステップ1: ビルド・SNS通知用 AWS認証の設定
@@ -144,6 +157,10 @@ jobs:
           role-to-assume: arn:aws:iam::832194395201:role/fujimoto-ecs-cicd-buildandpush
           aws-region: ap-northeast-1
 
+      # --------------------------------------------------
+      # ステップ2: 承認依頼を送信
+      # --------------------------------------------------
+      # 事前にメール通知先をサブスクリプションしておく必要があります。
       - name: Send email to GL approver
         run: |
           # メッセージ本文を作成
@@ -158,9 +175,43 @@ jobs:
 
           # AWS CLIでSNSトピックに発行
           aws sns publish --topic-arn "$TOPIC_ARN" --message "$MESSAGE_BODY"
+
+  approvalGL:
+      name: approvalGL
+      runs-on: ubuntu-latest
+      environment:
+        name: approvalGL
+      needs: notify-approvalGL
+      steps:
+        - name: Configure AWS credentials Build
+          run: echo "承認されました。"
+
+  notify-approval:
+    name: Notify approval
+    runs-on: ubuntu-latest
+    needs: approvalGL
+    steps:
       # --------------------------------------------------
-      # ステップ?: notify_approval 検証・号口のみ 号口のタスク定義更新前に実施 トピックはapprovalGLとは別。
-      # --------------------------------------------------  
+      # ステップ1: ビルド・SNS通知用 AWS認証の設定
+      # --------------------------------------------------
+      # OIDCを使用してAWSのIAMロールを引き受けます。
+      # 事前にAWS側でOIDCプロバイダーとIAMロールの設定が必要です。
+      # ECRは検証環境を共有するため、Assumeロールするロール名は固定です。
+      #
+      # 以下のシークレットを GitHub リポジトリの
+      # [Settings] > [Secrets and variables] > [Actions] に設定してください。
+      #
+      # - AWS_IAM_ROLE_NAME:  GitHub Actionsが引き受けるIAMロール名
+      - name: Configure AWS credentials Build
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::832194395201:role/fujimoto-ecs-cicd-buildandpush
+          aws-region: ap-northeast-1
+
+      # --------------------------------------------------
+      # ステップ2: 承認依頼を送信
+      # --------------------------------------------------
+      # 事前にメール通知先をサブスクリプションしておく必要があります。
       - name: Send email to approver
         run: |
           # メッセージ本文を作成
@@ -176,6 +227,20 @@ jobs:
           # AWS CLIでSNSトピックに発行
           aws sns publish --topic-arn "$TOPIC_ARN" --message "$MESSAGE_BODY"
 
-      # --------------------------------------------------
-      # ステップ?: 号口環境へのデプロイフローに続く （イメージのビルドとプッシュはしない）
-      # --------------------------------------------------  
+  approval:
+      name: approval
+      runs-on: ubuntu-latest
+      environment:
+        name: approval
+      needs: notify-approval
+      steps:
+        - name: Configure AWS credentials Build
+          run: echo "承認されました。"
+  # --------------------------------------------------         
+  # --------------------------------------------------  
+  # --------------------------------------------------  
+  # --------------------------------------------------
+  # --------------------------------------------------         
+  # --------------------------------------------------  
+  # --------------------------------------------------  
+  # --------------------------------------------------
