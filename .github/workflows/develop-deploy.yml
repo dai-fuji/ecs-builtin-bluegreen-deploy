@@ -111,7 +111,7 @@ jobs:
         with:
           task-definition: taskdef/task-definition.json
           container-name: sakurai-test-sv-mylxs-app-ecsco01
-          image: ${{ env.ECR_REPOSITORY_URI }}:${{ env.IMAGE_TAG }}
+          image: ${{ env.ECR_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
           # image: ${{ steps.build-image.outputs.image }} 
       
       # --------------------------------------------------
